@@ -136,7 +136,7 @@ pub struct Contribute<'info> {
     )]
     pub campaign: Account<'info, Campaign>,
     #[account(init_if_needed,
-        space = 8 + 32 + 8 + 1,
+        space = 8 + 32 + 8 + 1 + 1,
         constraint = contributor.owner == *signer.key,
         payer = signer,
         seeds = [b"contribute", signer.key.as_ref()],
