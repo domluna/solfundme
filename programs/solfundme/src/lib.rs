@@ -156,7 +156,7 @@ pub struct WithdrawContributer<'info> {
     )]
     pub campaign: Account<'info, Campaign>,
     #[account(mut,
-        constraint = contributor.owner.as_ref() == signer.key.as_ref(),
+        constraint = contributor.owner.as_ref() == signer.key.as_ref() && !contributor.withdrawn,
         seeds = [b"contribute", signer.key.as_ref()],
         bump = contributor.bump,
     )]
