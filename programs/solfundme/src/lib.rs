@@ -12,6 +12,7 @@ pub mod solfundme {
         campaign.end_date = args.end_date;
         campaign.goal_amount = args.goal_amount;
         campaign.total_contributed = 0;
+        campaign.bump = ctx.bumps.campaign;
         Ok(())
     }
 
@@ -28,11 +29,35 @@ pub mod solfundme {
         **contributor.to_account_info().try_borrow_mut_lamports()? -= args.amount;
         **campaign.to_account_info().try_borrow_mut_lamports()? += args.amount;
 
+        contributor.amount += args.amount;
+        contributor.withdrawn = false;
+        contributor.bump = ctx.bumps.contributor;
+
         campaign.total_contributed += args.amount;
         Ok(())
     }
 
-    pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> {
+    pub fn withdraw_contributer(ctx: Context<WithdrawContributer>) -> Result<()> {
+        let campaign = &mut ctx.accounts.campaign;
+        let contributor = &mut ctx.accounts.contributor;
+
+        let amount = contributor.amount;
+        **campaign.to_account_info().try_borrow_mut_lamports()? -= amount;
+        campaign.total_contributed -= amount;
+
+        **ctx
+            .accounts
+            .signer
+            .to_account_info()
+            .try_borrow_mut_lamports()? += amount;
+
+        contributor.withdrawn = true;
+        contributor.amount = 0;
+
+        Ok(())
+    }
+
+    pub fn withdraw_creator(ctx: Context<WithdrawCreator>) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
 
         require!(
@@ -47,14 +72,14 @@ pub mod solfundme {
         **campaign.to_account_info().try_borrow_mut_lamports()? -= campaign.total_contributed;
         **ctx
             .accounts
-            .authority
+            .signer
             .to_account_info()
             .try_borrow_mut_lamports()? += campaign.total_contributed;
 
         Ok(())
     }
 
-    pub fn refund(ctx: Context<Refund>, args: RefundArgs) -> Result<()> {
+    pub fn refund_all(ctx: Context<Refund>, args: RefundArgs) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
         let contributor = &mut ctx.accounts.contributor;
 
@@ -124,20 +149,41 @@ pub struct Contribute<'info> {
 }
 
 #[derive(Accounts)]
-pub struct Withdraw<'info> {
-    #[account(mut)]
-    pub campaign: Account<'info, Campaign>,
-    #[account(mut, 
+pub struct WithdrawContributer<'info> {
+    #[account(mut,
+        seeds = [b"create_campaign", campaign.authority.as_ref()],
+        bump = campaign.bump,
     )]
-    pub authority: Signer<'info>,
+    pub campaign: Account<'info, Campaign>,
+    #[account(mut,
+        constraint = contributor.owner.as_ref() == signer.key.as_ref(),
+        seeds = [b"contribute", signer.key.as_ref()],
+        bump = contributor.bump,
+    )]
+    pub contributor: Account<'info, Contributor>,
+    pub signer: Signer<'info>,
 }
 
 #[derive(Accounts)]
+pub struct WithdrawCreator<'info> {
+    #[account(mut,
+        seeds = [b"create_campaign", campaign.authority.as_ref()],
+        constraint = campaign.authority.as_ref() == signer.key.as_ref(),
+        bump = campaign.bump,
+    )]
+    pub campaign: Account<'info, Campaign>,
+    pub signer: Signer<'info>,
+}
+
+// refund everyone
+#[derive(Accounts)]
 pub struct Refund<'info> {
-    #[account(mut)]
+    #[account(mut,
+        constraint = signer.key.as_ref() == campaign.authority.as_ref(),
+    )]
     pub campaign: Account<'info, Campaign>,
     #[account(mut)]
-    pub contributor: Signer<'info>,
+    pub signer: Signer<'info>,
 }
 
 #[account]
@@ -154,6 +200,7 @@ pub struct Contributor {
     pub owner: Pubkey,
     pub amount: u64,
     pub bump: u8,
+    pub withdrawn: bool,
 }
 
 #[error_code]
