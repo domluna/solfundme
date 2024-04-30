@@ -79,18 +79,23 @@ pub mod solfundme {
         Ok(())
     }
 
-    pub fn refund_all(ctx: Context<Refund>, args: RefundArgs) -> Result<()> {
+    pub fn refund_contributer(ctx: Context<RefundContributer>) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
         let contributor = &mut ctx.accounts.contributor;
 
         require!(
-            campaign.end_date <= Clock::get().unwrap().unix_timestamp
-                && campaign.total_contributed < campaign.goal_amount,
+            campaign.end_date <= Clock::get().unwrap().unix_timestamp,
+            SolFundMeError::CampaignNotEnded
+        );
+        require!(
+            campaign.total_contributed < campaign.goal_amount,
             SolFundMeError::RefundConditionsNotMet
         );
-
-        **campaign.to_account_info().try_borrow_mut_lamports()? -= args.amount;
-        **contributor.to_account_info().try_borrow_mut_lamports()? += args.amount;
+        
+        // we don't need to decrease the total_contributed amount because the contributors are getting refunded. Further contributions are no longer allowed.
+        let amount = contributor.amount;
+        **campaign.to_account_info().try_borrow_mut_lamports()? -= amount;
+        **contributor.to_account_info().try_borrow_mut_lamports()? += amount;
 
         Ok(())
     }
@@ -175,14 +180,21 @@ pub struct WithdrawCreator<'info> {
     pub signer: Signer<'info>,
 }
 
-// refund everyone
+// similar to WithdrawContributer except the signer is the creator of the campaign
 #[derive(Accounts)]
-pub struct Refund<'info> {
+pub struct RefundContributer<'info> {
     #[account(mut,
-        constraint = signer.key.as_ref() == campaign.authority.as_ref(),
+        constraint = campaign.authority.as_ref() == signer.key.as_ref(),
+        seeds = [b"create_campaign", campaign.authority.as_ref()],
+        bump = campaign.bump,
     )]
     pub campaign: Account<'info, Campaign>,
-    #[account(mut)]
+    #[account(mut,
+        constraint = !contributor.withdrawn,
+        seeds = [b"contribute", signer.key.as_ref()],
+        bump = contributor.bump,
+    )]
+    pub contributor: Account<'info, Contributor>,
     pub signer: Signer<'info>,
 }
 
