@@ -8,7 +8,7 @@ pub mod solfundme {
 
     pub fn create_campaign(ctx: Context<CreateCampaign>, args: CreateCampaignArgs) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
-        campaign.authority = *ctx.accounts.authority.key;
+        campaign.authority = *ctx.accounts.signer.key;
         campaign.end_date = args.end_date;
         campaign.goal_amount = args.goal_amount;
         campaign.total_contributed = 0;
@@ -121,14 +121,14 @@ pub struct RefundArgs {
 pub struct CreateCampaign<'info> {
     #[account(
         init,
-        seeds = [b"create_campaign", authority.key.as_ref()],
-        bump,
-        payer = authority,
+        payer = signer,
         space = 8 + 32 + 8 + 8 + 8 + 1,
+        seeds = [b"create_campaign", signer.key.as_ref()],
+        bump,
     )]
     pub campaign: Account<'info, Campaign>,
     #[account(mut)]
-    pub authority: Signer<'info>,
+    pub signer: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
