@@ -21,14 +21,13 @@ describe("solfundme", () => {
   let contributorPDA2: PublicKey;
   let contributorPDA3: PublicKey;
 
-  const goalAmount = 1000;
-  // 20 seconds from now, round it
-  const endDate = Math.round(Date.now() / 1000) + 20;
+  const goalAmount = LAMPORTS_PER_SOL * 3;
+  const endDate = Math.round(Date.now() / 1000) + 10;
 
   before(async () => {
     let tx = await program.provider.connection.requestAirdrop(
       campaignCreator.publicKey,
-      LAMPORTS_PER_SOL * 2
+      LAMPORTS_PER_SOL * 5
     );
     let latestBlockhash = await program.provider.connection.getLatestBlockhash(
       "finalized"
@@ -41,7 +40,7 @@ describe("solfundme", () => {
 
     tx = await program.provider.connection.requestAirdrop(
       contributor.publicKey,
-      LAMPORTS_PER_SOL * 2
+      LAMPORTS_PER_SOL * 5
     );
     latestBlockhash = await program.provider.connection.getLatestBlockhash(
       "finalized"
@@ -54,7 +53,7 @@ describe("solfundme", () => {
 
     tx = await program.provider.connection.requestAirdrop(
       contributor2.publicKey,
-      LAMPORTS_PER_SOL * 2
+      LAMPORTS_PER_SOL * 5
     );
     latestBlockhash = await program.provider.connection.getLatestBlockhash(
       "finalized"
@@ -67,7 +66,7 @@ describe("solfundme", () => {
 
     tx = await program.provider.connection.requestAirdrop(
       contributor3.publicKey,
-      LAMPORTS_PER_SOL * 2
+      LAMPORTS_PER_SOL * 5
     );
     latestBlockhash = await program.provider.connection.getLatestBlockhash(
       "finalized"
@@ -129,7 +128,7 @@ describe("solfundme", () => {
       campaignPDA
     );
 
-    const contributeAmount = 500;
+    const contributeAmount = LAMPORTS_PER_SOL * 1;
     await program.methods
       .contribute(new anchor.BN(contributeAmount))
       .accounts({
@@ -170,12 +169,12 @@ describe("solfundme", () => {
         .accounts({
           campaign: campaignPDA,
           signer: campaignCreator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
         })
-        .signers([campaignCreator])
         .rpc();
       assert.fail("Withdrawal should have failed");
     } catch (error) {
-      assert.include(error.message, "The campaign has not ended yet.");
+      assert.include(error.message, "The goal amount has not been reached.");
     }
   });
 
@@ -186,7 +185,15 @@ describe("solfundme", () => {
     );
     console.log("PDA contribute", contributorPDA2.toString());
 
-    const contributeAmount = 1500;
+    // balance
+    const contributorBalance1 = await program.provider.connection.getBalance(
+      contributor2.publicKey
+    );
+    const campaignBalance1 = await program.provider.connection.getBalance(
+      campaignPDA
+    );
+
+    const contributeAmount = LAMPORTS_PER_SOL * 2;
 
     await program.methods
       .contribute(new anchor.BN(contributeAmount))
@@ -203,11 +210,20 @@ describe("solfundme", () => {
       });
 
     const campaign = await program.account.campaign.fetch(campaignPDA);
-    assert.equal(campaign.totalContributed.toNumber(), 2000);
+    assert.equal(campaign.totalContributed.toNumber(), LAMPORTS_PER_SOL * 3);
     const contributorAccount = await program.account.contributor.fetch(
       contributorPDA2
     );
     assert.equal(contributorAccount.amount.toNumber(), contributeAmount);
+
+    const contributorBalance2 = await program.provider.connection.getBalance(
+      contributor2.publicKey
+    );
+    const campaignBalance2 = await program.provider.connection.getBalance(
+      campaignPDA
+    );
+    assert.isBelow(contributorBalance2, contributorBalance1);
+    assert.isAbove(campaignBalance2, campaignBalance1);
   });
 
   it("Contributes from a third account but fails due to goal already being met", async () => {
@@ -217,7 +233,15 @@ describe("solfundme", () => {
     );
     console.log("PDA contribute", contributorPDA3.toString());
 
-    const contributeAmount = 2500;
+    // balance
+    const contributorBalance1 = await program.provider.connection.getBalance(
+      contributor3.publicKey
+    );
+    const campaignBalance1 = await program.provider.connection.getBalance(
+      campaignPDA
+    );
+
+    const contributeAmount = LAMPORTS_PER_SOL * 4;
 
     await program.methods
       .contribute(new anchor.BN(contributeAmount))
@@ -234,11 +258,20 @@ describe("solfundme", () => {
       });
 
     const campaign = await program.account.campaign.fetch(campaignPDA);
-    assert.equal(campaign.totalContributed.toNumber(), 4500);
+    assert.equal(campaign.totalContributed.toNumber(), LAMPORTS_PER_SOL * 7);
     const contributorAccount = await program.account.contributor.fetch(
       contributorPDA3
     );
     assert.equal(contributorAccount.amount.toNumber(), contributeAmount);
+
+    const contributorBalance2 = await program.provider.connection.getBalance(
+      contributor3.publicKey
+    );
+    const campaignBalance2 = await program.provider.connection.getBalance(
+      campaignPDA
+    );
+    assert.isBelow(contributorBalance2, contributorBalance1);
+    assert.isAbove(campaignBalance2, campaignBalance1);
   });
 
   it("Withdraws from from the first account", async () => {
@@ -246,27 +279,25 @@ describe("solfundme", () => {
       contributor.publicKey
     );
 
-    const latestBlockhash =
-      await program.provider.connection.getLatestBlockhash("finalized");
+    const campaignBalance1 = await program.provider.connection.getBalance(
+      campaignPDA
+    );
 
-    const tx = await program.methods
+    await program.methods
       .withdrawContributer()
       .accounts({
         campaign: campaignPDA,
         contributor: contributorPDA,
         signer: contributor.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
       })
-      .signers([contributor])
-      .rpc();
-
-    await program.provider.connection.confirmTransaction({
-      signature: tx,
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-    });
+      .rpc()
+      .catch((error) => {
+        console.log("error", error);
+      });
 
     const campaign = await program.account.campaign.fetch(campaignPDA);
-    assert.equal(campaign.totalContributed.toNumber(), 4000);
+    assert.equal(campaign.totalContributed.toNumber(), LAMPORTS_PER_SOL * 6);
     const contributorAccount = await program.account.contributor.fetch(
       contributorPDA
     );
@@ -276,9 +307,89 @@ describe("solfundme", () => {
     const newFunds = await program.provider.connection.getBalance(
       contributor.publicKey
     );
+    const campaignBalance2 = await program.provider.connection.getBalance(
+      campaignPDA
+    );
     assert.isAbove(newFunds, currentFunds);
+    assert.isBelow(campaignBalance2, campaignBalance1);
   });
 
-  it("Withdraws from from the first account again and errors", async () => {});
-  it("Withdraws from the campaign but is not successful due to the time not being up", async () => {});
+  it("Withdraws from from the first account again and errors", async () => {
+    try {
+      await program.methods
+        .withdrawContributer()
+        .accounts({
+          campaign: campaignPDA,
+          contributor: contributorPDA,
+          signer: contributor.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc();
+      assert.fail("Withdrawal should have failed");
+    } catch (error) {
+      assert.include(error.message, "Cannot withdraw more than once.");
+    }
+  });
+
+  it("Withdraws from the campaign but is not successful due to the time not being up", async () => {
+    try {
+      await program.methods
+        .withdrawCreator()
+        .accounts({
+          campaign: campaignPDA,
+          signer: campaignCreator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc();
+      assert.fail("Withdrawal should have failed");
+    } catch (error) {
+      assert.include(error.message, "The campaign has not ended yet.");
+    }
+  });
+
+  it("Withdraws from the campaign", async () => {
+    // wait for the campaign to end
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+
+    const campaignBalance1 = await program.provider.connection.getBalance(
+      campaignPDA
+    );
+    const creatorBalance1 = await program.provider.connection.getBalance(
+      campaignCreator.publicKey
+    );
+
+    await program.methods
+      .withdrawCreator()
+      .accounts({
+        campaign: campaignPDA,
+        signer: campaignCreator.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const campaignBalance2 = await program.provider.connection.getBalance(
+      campaignPDA
+    );
+    const creatorBalance2 = await program.provider.connection.getBalance(
+      campaignCreator.publicKey
+    );
+    assert.isAbove(creatorBalance2, 6 * LAMPORTS_PER_SOL);
+    assert.isBelow(campaignBalance2, campaignBalance1);
+  });
+
+  it("Withdraws from from the second account (errors)", async () => {
+    try {
+      await program.methods
+        .withdrawContributer()
+        .accounts({
+          campaign: campaignPDA,
+          contributor: contributorPDA2,
+          signer: contributor2.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc();
+    } catch (error) {
+      assert.include(error.message, "Refund conditions are not met.");
+    }
+  });
 });

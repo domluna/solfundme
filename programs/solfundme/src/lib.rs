@@ -14,6 +14,7 @@ pub mod solfundme {
         campaign.goal_amount = goal_amount;
         campaign.total_contributed = 0;
         campaign.bump = ctx.bumps.campaign;
+        campaign.withdrawn = false;
         Ok(())
     }
 
@@ -31,11 +32,19 @@ pub mod solfundme {
             SolFundMeError::CampaignEnded
         );
 
-        system_instruction::transfer(
-            &signer.to_account_info().key,
-            &campaign.to_account_info().key,
+
+        let ix = system_instruction::transfer(
+            &signer.key(),
+            &campaign.key(),
             amount,
         );
+        anchor_lang::solana_program::program::invoke(
+            &ix,
+            &[
+                campaign.to_account_info(),
+                signer.to_account_info(),
+            ],
+        )?;
 
         contributor.owner = ctx.accounts.signer.key();
         contributor.amount += amount;
@@ -56,13 +65,17 @@ pub mod solfundme {
             SolFundMeError::AlreadyWithdrawn
         );
 
+        // can only withdraw after campaign has ended if goal is not reached
+        // otherwise can withdraw anytime
+        require!(
+            !(Clock::get().unwrap().unix_timestamp >= campaign.end_date && campaign.total_contributed >= campaign.goal_amount),
+            SolFundMeError::RefundConditionsNotMet
+        );
+
         let amount = contributor.amount;
 
-        system_instruction::transfer(
-            &campaign.to_account_info().key,
-            &signer.to_account_info().key,
-            amount,
-        );
+        campaign.sub_lamports(amount)?;
+        signer.add_lamports(amount)?;
 
         campaign.total_contributed -= amount;
         contributor.withdrawn = true;
@@ -73,43 +86,23 @@ pub mod solfundme {
 
     pub fn withdraw_creator(ctx: Context<WithdrawCreator>) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
+        let signer = &ctx.accounts.signer;
 
-        require!(
-            campaign.end_date <= Clock::get().unwrap().unix_timestamp,
-            SolFundMeError::CampaignNotEnded
-        );
         require!(
             campaign.total_contributed >= campaign.goal_amount,
             SolFundMeError::GoalNotReached
         );
-
-        **campaign.to_account_info().try_borrow_mut_lamports()? -= campaign.total_contributed;
-        **ctx
-            .accounts
-            .signer
-            .to_account_info()
-            .try_borrow_mut_lamports()? += campaign.total_contributed;
-
-        Ok(())
-    }
-
-    pub fn refund_contributer(ctx: Context<RefundContributer>) -> Result<()> {
-        let campaign = &mut ctx.accounts.campaign;
-        let contributor = &mut ctx.accounts.contributor;
-
         require!(
             campaign.end_date <= Clock::get().unwrap().unix_timestamp,
             SolFundMeError::CampaignNotEnded
         );
-        require!(
-            campaign.total_contributed < campaign.goal_amount,
-            SolFundMeError::RefundConditionsNotMet
-        );
-        
-        // we don't need to decrease the total_contributed amount because the contributors are getting refunded. Further contributions are no longer allowed.
-        let amount = contributor.amount;
-        **campaign.to_account_info().try_borrow_mut_lamports()? -= amount;
-        **contributor.to_account_info().try_borrow_mut_lamports()? += amount;
+
+        let amount = campaign.total_contributed;
+
+        campaign.sub_lamports(amount)?;
+        signer.add_lamports(amount)?;
+
+        campaign.withdrawn = true;
 
         Ok(())
     }
@@ -120,7 +113,7 @@ pub struct CreateCampaign<'info> {
     #[account(
         init,
         payer = signer,
-        space = 8 + 32 + 8 + 8 + 8 + 1,
+        space = 8 + 32 + 8 + 8 + 8 + 1 + 1,
         seeds = [b"create_campaign", signer.key.as_ref()],
         bump,
     )]
@@ -163,18 +156,23 @@ pub struct WithdrawContributer<'info> {
     )]
     pub contributor: Account<'info, Contributor>,
     #[account(mut)]
-    pub signer: Signer<'info>,
+    /// CHECK: sending money to this account
+    pub signer: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 pub struct WithdrawCreator<'info> {
     #[account(mut,
         seeds = [b"create_campaign", campaign.authority.as_ref()],
-        constraint = campaign.authority.as_ref() == signer.key.as_ref(),
+        constraint = campaign.authority.as_ref() == signer.key.as_ref() && !campaign.withdrawn,
         bump = campaign.bump,
     )]
     pub campaign: Account<'info, Campaign>,
-    pub signer: Signer<'info>,
+    /// CHECK: receiving money from this account
+    #[account(mut)]
+    pub signer: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 // similar to WithdrawContributer except the signer is the creator of the campaign
@@ -200,6 +198,7 @@ pub struct Campaign {
     pub end_date: i64,
     pub goal_amount: u64,
     pub total_contributed: u64,
+    pub withdrawn: bool,
     pub bump: u8,
 }
 
@@ -207,8 +206,8 @@ pub struct Campaign {
 pub struct Contributor {
     pub owner: Pubkey,
     pub amount: u64,
-    pub bump: u8,
     pub withdrawn: bool,
+    pub bump: u8,
 }
 
 #[error_code]
@@ -223,6 +222,6 @@ pub enum SolFundMeError {
     GoalNotReached,
     #[msg("Refund conditions are not met.")]
     RefundConditionsNotMet,
-    #[msg("Cannot withdraw twice.")]
+    #[msg("Cannot withdraw more than once.")]
     AlreadyWithdrawn,
 }
