@@ -3,8 +3,6 @@
 [features]
 resolution = true
 skip-lint = false
-seeds = true
-docs = false
 
 [programs.localnet]
 solfundme = "Dd8znVFe2PieDStP8tV99c7P3jhKeNnf8EfFkEXjWtan"

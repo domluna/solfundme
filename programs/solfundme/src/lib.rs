@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::system_instruction;
 
 declare_id!("Dd8znVFe2PieDStP8tV99c7P3jhKeNnf8EfFkEXjWtan");
 
@@ -6,51 +7,64 @@ declare_id!("Dd8znVFe2PieDStP8tV99c7P3jhKeNnf8EfFkEXjWtan");
 pub mod solfundme {
     use super::*;
 
-    pub fn create_campaign(ctx: Context<CreateCampaign>, args: CreateCampaignArgs) -> Result<()> {
+    pub fn create_campaign(ctx: Context<CreateCampaign>, goal_amount: u64, end_date: i64) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
-        campaign.authority = *ctx.accounts.signer.key;
-        campaign.end_date = args.end_date;
-        campaign.goal_amount = args.goal_amount;
+        campaign.authority = ctx.accounts.signer.key();
+        campaign.end_date = end_date;
+        campaign.goal_amount = goal_amount;
         campaign.total_contributed = 0;
         campaign.bump = ctx.bumps.campaign;
         Ok(())
     }
 
-    pub fn contribute(ctx: Context<Contribute>, args: ContributeArgs) -> Result<()> {
+    pub fn contribute(ctx: Context<Contribute>, amount: u64) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
         let contributor = &mut ctx.accounts.contributor;
+        let signer = &ctx.accounts.signer;
 
-        require!(args.amount > 0, SolFundMeError::InvalidAmount);
+        require!(
+            amount <= **ctx.accounts.signer.to_account_info().lamports.borrow() && amount > 0,
+            SolFundMeError::InvalidAmount
+        );
         require!(
             campaign.end_date > Clock::get().unwrap().unix_timestamp,
             SolFundMeError::CampaignEnded
         );
 
-        **contributor.to_account_info().try_borrow_mut_lamports()? -= args.amount;
-        **campaign.to_account_info().try_borrow_mut_lamports()? += args.amount;
+        system_instruction::transfer(
+            &signer.to_account_info().key,
+            &campaign.to_account_info().key,
+            amount,
+        );
 
-        contributor.amount += args.amount;
+        contributor.owner = ctx.accounts.signer.key();
+        contributor.amount += amount;
         contributor.withdrawn = false;
         contributor.bump = ctx.bumps.contributor;
 
-        campaign.total_contributed += args.amount;
+        campaign.total_contributed += amount;
         Ok(())
     }
 
     pub fn withdraw_contributer(ctx: Context<WithdrawContributer>) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
         let contributor = &mut ctx.accounts.contributor;
+        let signer = &ctx.accounts.signer;
+
+        require!(
+            !contributor.withdrawn,
+            SolFundMeError::AlreadyWithdrawn
+        );
 
         let amount = contributor.amount;
-        **campaign.to_account_info().try_borrow_mut_lamports()? -= amount;
+
+        system_instruction::transfer(
+            &campaign.to_account_info().key,
+            &signer.to_account_info().key,
+            amount,
+        );
+
         campaign.total_contributed -= amount;
-
-        **ctx
-            .accounts
-            .signer
-            .to_account_info()
-            .try_borrow_mut_lamports()? += amount;
-
         contributor.withdrawn = true;
         contributor.amount = 0;
 
@@ -101,22 +115,6 @@ pub mod solfundme {
     }
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Default)]
-pub struct CreateCampaignArgs {
-    pub goal_amount: u64,
-    pub end_date: i64,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Default)]
-pub struct ContributeArgs {
-    pub amount: u64,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Default)]
-pub struct RefundArgs {
-    pub amount: u64,
-}
-
 #[derive(Accounts)]
 pub struct CreateCampaign<'info> {
     #[account(
@@ -137,12 +135,10 @@ pub struct Contribute<'info> {
     #[account(mut, 
         seeds = [b"create_campaign", campaign.authority.as_ref()],
         bump = campaign.bump,
-        constraint = campaign.authority != *contributor.to_account_info().key,
     )]
     pub campaign: Account<'info, Campaign>,
     #[account(init_if_needed,
         space = 8 + 32 + 8 + 1 + 1,
-        constraint = contributor.owner == *signer.key,
         payer = signer,
         seeds = [b"contribute", signer.key.as_ref()],
         bump,
@@ -161,11 +157,12 @@ pub struct WithdrawContributer<'info> {
     )]
     pub campaign: Account<'info, Campaign>,
     #[account(mut,
-        constraint = contributor.owner.as_ref() == signer.key.as_ref() && !contributor.withdrawn,
+        constraint = contributor.owner.as_ref() == signer.key.as_ref(),
         seeds = [b"contribute", signer.key.as_ref()],
         bump = contributor.bump,
     )]
     pub contributor: Account<'info, Contributor>,
+    #[account(mut)]
     pub signer: Signer<'info>,
 }
 
@@ -190,7 +187,6 @@ pub struct RefundContributer<'info> {
     )]
     pub campaign: Account<'info, Campaign>,
     #[account(mut,
-        constraint = !contributor.withdrawn,
         seeds = [b"contribute", signer.key.as_ref()],
         bump = contributor.bump,
     )]
@@ -227,4 +223,6 @@ pub enum SolFundMeError {
     GoalNotReached,
     #[msg("Refund conditions are not met.")]
     RefundConditionsNotMet,
+    #[msg("Cannot withdraw twice.")]
+    AlreadyWithdrawn,
 }
