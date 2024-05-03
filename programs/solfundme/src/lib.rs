@@ -175,23 +175,6 @@ pub struct WithdrawCreator<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// similar to WithdrawContributer except the signer is the creator of the campaign
-#[derive(Accounts)]
-pub struct RefundContributer<'info> {
-    #[account(mut,
-        constraint = campaign.authority.as_ref() == signer.key.as_ref(),
-        seeds = [b"create_campaign", campaign.authority.as_ref()],
-        bump = campaign.bump,
-    )]
-    pub campaign: Account<'info, Campaign>,
-    #[account(mut,
-        seeds = [b"contribute", signer.key.as_ref()],
-        bump = contributor.bump,
-    )]
-    pub contributor: Account<'info, Contributor>,
-    pub signer: Signer<'info>,
-}
-
 #[account]
 pub struct Campaign {
     pub authority: Pubkey,
