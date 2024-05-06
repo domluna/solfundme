@@ -15,7 +15,6 @@ pub mod solfundme {
         campaign.total_contributed = 0;
         campaign.bump = ctx.bumps.campaign;
         campaign.withdrawn = false;
-        campaign.number_of_contributors = 0;
         Ok(())
     }
 
@@ -53,7 +52,6 @@ pub mod solfundme {
         contributor.bump = ctx.bumps.contributor;
 
         campaign.total_contributed += amount;
-        campaign.number_of_contributors += 1;
         Ok(())
     }
 
@@ -115,7 +113,7 @@ pub struct CreateCampaign<'info> {
     #[account(
         init,
         payer = signer,
-        space = 8 + 32 + 8 + 8 + 8 + 1 + 1 + 8,
+        space = 8 + 32 + 8 + 8 + 8 + 1 + 1,
         seeds = [b"create_campaign", signer.key.as_ref()],
         bump,
     )]
@@ -185,7 +183,6 @@ pub struct Campaign {
     pub total_contributed: u64,
     pub withdrawn: bool,
     pub bump: u8,
-    pub number_of_contributors: u64,
 }
 
 #[account]
